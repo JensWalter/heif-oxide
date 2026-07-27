@@ -269,6 +269,19 @@ fn corrupt_payload_is_an_error() {
     assert!(decode_bytes(&tb::make_heic(&items, 1, &[])).is_err());
 }
 
+/// Not a test: writes a small complete `.heic` (the flat-red codestream in
+/// a single-item container) to `testdata/` for downstream consumers that
+/// want a committed end-to-end fixture. Run explicitly with
+/// `cargo test generate_sample_heic -- --ignored`.
+#[test]
+#[ignore = "fixture generator, writes into testdata/"]
+fn generate_sample_heic() {
+    let file = single_item_heic("flat_red_64");
+    decode_bytes(&file).expect("generated fixture must decode");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/flat_red_64.heic");
+    std::fs::write(path, file).expect("write fixture");
+}
+
 /// `to_f32_interleaved` and `to_rgba8` round sensibly.
 #[test]
 fn conversion_helpers() {
