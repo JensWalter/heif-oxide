@@ -10,6 +10,8 @@ fn flat(width: usize, height: usize, bit_depth: u8, y: u16, u: u16, v: u16) -> Y
         width,
         height,
         bit_depth,
+        chroma_shift_w: 1,
+        chroma_shift_h: 1,
         y: vec![y; width * height],
         u: vec![u; cw * ch],
         v: vec![v; cw * ch],
@@ -139,7 +141,7 @@ fn p3_primaries_shift_colors() {
 /// Grid blitting places tiles at the right plane offsets, chroma included.
 #[test]
 fn blit_places_tiles() {
-    let mut canvas = YuvImage::black(4, 2, 8);
+    let mut canvas = YuvImage::black(4, 2, 8, 1, 1);
     let left = flat(2, 2, 8, 10, 20, 30);
     let right = flat(2, 2, 8, 40, 50, 60);
     canvas.blit(&left, 0, 0).unwrap();
@@ -152,7 +154,7 @@ fn blit_places_tiles() {
 /// Odd blit offsets (which would shear the chroma grid) are rejected.
 #[test]
 fn blit_rejects_odd_offsets() {
-    let mut canvas = YuvImage::black(4, 4, 8);
+    let mut canvas = YuvImage::black(4, 4, 8, 1, 1);
     let tile = flat(2, 2, 8, 0, 0, 0);
     assert!(canvas.blit(&tile, 1, 0).is_err());
     assert!(canvas.blit(&tile, 0, 1).is_err());

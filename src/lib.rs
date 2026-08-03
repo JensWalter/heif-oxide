@@ -23,9 +23,11 @@
 //! ## Limitations
 //!
 //! - Decode only — there is no pure-Rust HEVC encoder to pair with.
-//! - Alpha auxiliary images are decoded when they are 4:2:0-coded; the more
-//!   common monochrome (4:0:0) alpha is skipped (the underlying HEVC
-//!   decoder is 4:2:0-only), yielding an image without alpha.
+//! - Primary images are decoded from 4:2:0 (8/10-bit) and intra-coded 4:4:4
+//!   (8/10-bit, e.g. Apple "edited"/HDR photos) HEVC. Alpha auxiliary images
+//!   are decoded when 4:2:0-coded; the more common monochrome (4:0:0) alpha
+//!   is skipped (the underlying HEVC decoder has no monochrome path),
+//!   yielding an image without alpha.
 //! - AVIF (`av01` payloads) and JPEG-in-HEIF are rejected with a clear
 //!   error, as are protected items and externally-referenced data.
 //! - HDR transfer functions (PQ/HLG) are not tone-mapped; wide-gamut
@@ -345,7 +347,13 @@ fn decode_grid(
             tile_h * rows
         )));
     }
-    let mut canvas = YuvImage::black(tile_w * cols, tile_h * rows, decoded[0].bit_depth);
+    let mut canvas = YuvImage::black(
+        tile_w * cols,
+        tile_h * rows,
+        decoded[0].bit_depth,
+        decoded[0].chroma_shift_w,
+        decoded[0].chroma_shift_h,
+    );
     for (i, tile) in decoded.iter().enumerate() {
         canvas.blit(tile, (i % cols) * tile_w, (i / cols) * tile_h)?;
     }
