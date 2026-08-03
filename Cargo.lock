@@ -31,8 +31,7 @@ dependencies = [
 [[package]]
 name = "rust_h265"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dde60f5842f27ed06f1d84844cacd93d1a159f606365b30a5594c771e6b4eb17"
+source = "git+https://github.com/JensWalter/rust_h265?branch=chroma444-support#8098d5994f87dc54ca0accadae1db036c13712fc"
 
 [[package]]
 name = "syn"
