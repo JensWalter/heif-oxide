@@ -2,7 +2,8 @@
 
 use super::*;
 
-/// Flat image helper: every luma sample `y`, every chroma sample `u`/`v`.
+/// Flat 4:2:0 image helper: every luma sample `y`, every chroma sample
+/// `u`/`v`.
 fn flat(width: usize, height: usize, bit_depth: u8, y: u16, u: u16, v: u16) -> YuvImage {
     let cw = width.div_ceil(2);
     let ch = height.div_ceil(2);
@@ -10,9 +11,25 @@ fn flat(width: usize, height: usize, bit_depth: u8, y: u16, u: u16, v: u16) -> Y
         width,
         height,
         bit_depth,
+        chroma_shift_w: 1,
+        chroma_shift_h: 1,
         y: vec![y; width * height],
         u: vec![u; cw * ch],
         v: vec![v; cw * ch],
+    }
+}
+
+/// Flat 4:4:4 image helper: chroma planes at full resolution.
+fn flat_444(width: usize, height: usize, bit_depth: u8, y: u16, u: u16, v: u16) -> YuvImage {
+    YuvImage {
+        width,
+        height,
+        bit_depth,
+        chroma_shift_w: 0,
+        chroma_shift_h: 0,
+        y: vec![y; width * height],
+        u: vec![u; width * height],
+        v: vec![v; width * height],
     }
 }
 
@@ -139,7 +156,7 @@ fn p3_primaries_shift_colors() {
 /// Grid blitting places tiles at the right plane offsets, chroma included.
 #[test]
 fn blit_places_tiles() {
-    let mut canvas = YuvImage::black(4, 2, 8);
+    let mut canvas = YuvImage::black(4, 2, 8, 1, 1);
     let left = flat(2, 2, 8, 10, 20, 30);
     let right = flat(2, 2, 8, 40, 50, 60);
     canvas.blit(&left, 0, 0).unwrap();
@@ -152,10 +169,48 @@ fn blit_places_tiles() {
 /// Odd blit offsets (which would shear the chroma grid) are rejected.
 #[test]
 fn blit_rejects_odd_offsets() {
-    let mut canvas = YuvImage::black(4, 4, 8);
+    let mut canvas = YuvImage::black(4, 4, 8, 1, 1);
     let tile = flat(2, 2, 8, 0, 0, 0);
     assert!(canvas.blit(&tile, 1, 0).is_err());
     assert!(canvas.blit(&tile, 0, 1).is_err());
+}
+
+/// 4:4:4 tiles carry one chroma sample per pixel, so any offset aligns.
+#[test]
+fn blit_places_444_tiles_at_odd_offsets() {
+    let mut canvas = YuvImage::black(2, 1, 8, 0, 0);
+    canvas.blit(&flat_444(1, 1, 8, 10, 20, 30), 0, 0).unwrap();
+    canvas.blit(&flat_444(1, 1, 8, 40, 50, 60), 1, 0).unwrap();
+    assert_eq!(canvas.y, vec![10, 40]);
+    assert_eq!(canvas.u, vec![20, 50]);
+    assert_eq!(canvas.v, vec![30, 60]);
+}
+
+/// A 4:4:4 tile in a 4:2:0 canvas (or the other way round) is rejected.
+#[test]
+fn blit_rejects_mixed_chroma_formats() {
+    let mut canvas = YuvImage::black(4, 4, 8, 1, 1);
+    assert!(canvas.blit(&flat_444(2, 2, 8, 0, 0, 0), 0, 0).is_err());
+    let mut canvas = YuvImage::black(4, 4, 8, 0, 0);
+    assert!(canvas.blit(&flat(2, 2, 8, 0, 0, 0), 0, 0).is_err());
+}
+
+/// 4:4:4 chroma is read per pixel: a red pixel next to a gray one keeps
+/// both colours, with no chroma shared between them.
+#[test]
+fn yuv_444_keeps_per_pixel_chroma() {
+    let mut img = flat_444(2, 1, 8, 0, 0, 0);
+    img.y = vec![81, 128];
+    img.u = vec![90, 128];
+    img.v = vec![240, 128];
+    let nclx = Nclx {
+        matrix: 6,
+        full_range: false,
+        ..Nclx::default()
+    };
+    let rgb = as_rgb8(yuv_to_rgb(&img, &nclx));
+    assert_flat_rgb(&rgb[..3], [254, 0, 0], 1);
+    assert_flat_rgb(&rgb[3..], [130, 130, 130], 1);
 }
 
 /// The interpolated transfer tables track the exact sRGB curves to far

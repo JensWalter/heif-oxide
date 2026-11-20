@@ -37,11 +37,12 @@
 //! ## Limitations
 //!
 //! - Decode only — there is no pure-Rust HEVC encoder to pair with.
-//! - Alpha auxiliary images are decoded when they are 4:2:0-coded; the more
-//!   common monochrome (4:0:0) alpha is skipped (the underlying HEVC
-//!   decoder does not support monochrome), yielding an image without alpha.
-//! - 4:4:4 streams are rejected: rust_h265 decodes them, but this crate's
-//!   colour pipeline is 4:2:0-only.
+//! - Pictures are decoded from 4:2:0 and 4:4:4 HEVC (some edited iPhone
+//!   photos are 4:4:4); 4:2:2 streams are rejected with a clear error.
+//! - Alpha auxiliary images are decoded when they are 4:2:0- or 4:4:4-coded;
+//!   the more common monochrome (4:0:0) alpha is skipped (the underlying
+//!   HEVC decoder does not support monochrome), yielding an image without
+//!   alpha.
 //! - AVIF (`av01` payloads) and JPEG-in-HEIF are rejected with a clear
 //!   error, as are protected items and externally-referenced data.
 //! - HDR transfer functions (PQ/HLG) are not tone-mapped; wide-gamut
@@ -645,7 +646,13 @@ fn decode_grid(
             "grid canvas {canvas_w}x{canvas_h} smaller than declared output {out_w}x{out_h}"
         )));
     }
-    let mut canvas = YuvImage::black(canvas_w, canvas_h, decoded[0].bit_depth);
+    let mut canvas = YuvImage::black(
+        canvas_w,
+        canvas_h,
+        decoded[0].bit_depth,
+        decoded[0].chroma_shift_w,
+        decoded[0].chroma_shift_h,
+    );
     for (i, tile) in decoded.iter().enumerate() {
         canvas.blit(tile, (i % cols) * tile_w, (i / cols) * tile_h)?;
     }

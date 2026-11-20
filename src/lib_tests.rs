@@ -719,13 +719,30 @@ fn corrupt_payload_is_an_error() {
     assert!(decode_bytes(&tb::make_heic(&items, 1, &[])).is_err());
 }
 
-/// A 4:4:4 codestream decodes in rust_h265 but is rejected cleanly here
-/// (the colour pipeline is 4:2:0-only).
+/// A 4:4:4 codestream decodes to the same red as its 4:2:0 twin.
 #[test]
-fn rejects_444_chroma() {
-    match decode_bytes(&single_item_heic("flat_red_64_444")) {
-        Err(HeifError::Unsupported(msg)) => assert!(msg.contains("chroma_format_idc 3"), "{msg}"),
-        other => panic!("expected Unsupported, got {:?}", other.err()),
+fn decodes_444_chroma() {
+    let image = decode_bytes(&single_item_heic("flat_red_64_444")).expect("decode");
+    assert_eq!((image.width, image.height), (64, 64));
+    assert_flat_rgb8(&image, [254, 0, 0], 1);
+}
+
+/// A grid of 4:4:4 tiles assembles on a 4:4:4 canvas.
+#[test]
+fn decodes_444_grid() {
+    let file = grid_heic("flat_red_64_444", "flat_red_64_444", 128, 64, vec![]);
+    let image = decode_bytes(&file).expect("decode");
+    assert_eq!((image.width, image.height), (128, 64));
+    assert_flat_rgb8(&image, [254, 0, 0], 1);
+}
+
+/// A grid that mixes 4:2:0 and 4:4:4 tiles is rejected.
+#[test]
+fn rejects_grid_with_mixed_chroma_formats() {
+    let file = grid_heic("flat_red_64", "flat_red_64_444", 128, 64, vec![]);
+    match decode_bytes(&file) {
+        Err(HeifError::Invalid(msg)) => assert!(msg.contains("mixed chroma"), "{msg}"),
+        other => panic!("expected Invalid, got {:?}", other.err()),
     }
 }
 

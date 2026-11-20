@@ -48,12 +48,16 @@ impl Default for Nclx {
     }
 }
 
-/// Planar YCbCr 4:2:0 image with u16 sample storage (holds 8-bit values
-/// unscaled; `bit_depth` says how many bits are meaningful).
+/// Planar YCbCr image, 4:2:0 or 4:4:4, with u16 sample storage (holds 8-bit
+/// values unscaled; `bit_depth` says how many bits are meaningful).
 pub struct YuvImage {
     pub width: usize,
     pub height: usize,
     pub bit_depth: u8,
+    /// `log2(SubWidthC)` / `log2(SubHeightC)`: 1 for a subsampled chroma
+    /// dimension (both in 4:2:0), 0 for full resolution (both in 4:4:4).
+    pub chroma_shift_w: u32,
+    pub chroma_shift_h: u32,
     /// Luma plane, `width * height`.
     pub y: Vec<u16>,
     /// Chroma planes, `chroma_width() * chroma_height()`.
@@ -61,19 +65,38 @@ pub struct YuvImage {
     pub v: Vec<u16>,
 }
 
+/// Chroma shifts for the formats rust_h265 decodes (spec table 6-1):
+/// 4:2:0 halves both chroma dimensions, 4:4:4 keeps them at full size.
+fn chroma_shifts(chroma_format_idc: u32) -> Result<(u32, u32), HeifError> {
+    match chroma_format_idc {
+        1 => Ok((1, 1)),
+        3 => Ok((0, 0)),
+        other => Err(HeifError::Unsupported(format!(
+            "HEVC chroma_format_idc {other} (only 4:2:0 and 4:4:4 are supported)"
+        ))),
+    }
+}
+
 impl YuvImage {
     pub fn chroma_width(&self) -> usize {
-        self.width.div_ceil(2)
+        self.width.div_ceil(1 << self.chroma_shift_w)
     }
 
     pub fn chroma_height(&self) -> usize {
-        self.height.div_ceil(2)
+        self.height.div_ceil(1 << self.chroma_shift_h)
     }
 
-    /// An all-black canvas, used as the target for grid assembly.
-    pub fn black(width: usize, height: usize, bit_depth: u8) -> Self {
-        let cw = width.div_ceil(2);
-        let ch = height.div_ceil(2);
+    /// An all-black canvas, used as the target for grid assembly. Its chroma
+    /// geometry matches the tiles that are blitted in.
+    pub fn black(
+        width: usize,
+        height: usize,
+        bit_depth: u8,
+        chroma_shift_w: u32,
+        chroma_shift_h: u32,
+    ) -> Self {
+        let cw = width.div_ceil(1 << chroma_shift_w);
+        let ch = height.div_ceil(1 << chroma_shift_h);
         // Black in YCbCr is Y=0 (or 16 in limited range — irrelevant, every
         // canvas pixel gets overwritten by a tile), Cb=Cr=half scale.
         let half = 1u16 << (bit_depth - 1);
@@ -81,6 +104,8 @@ impl YuvImage {
             width,
             height,
             bit_depth,
+            chroma_shift_w,
+            chroma_shift_h,
             y: vec![0; width * height],
             u: vec![half; cw * ch],
             v: vec![half; cw * ch],
@@ -90,18 +115,11 @@ impl YuvImage {
     /// Wrap a decoded `rust_h265::Frame`, normalizing both storage widths to
     /// u16 and validating the plane sizes the container promised.
     pub fn from_frame(frame: &Frame) -> Result<Self, HeifError> {
-        // rust_h265 also decodes 4:4:4 (`chroma_format_idc` 3), but the
-        // canvas, blit and colour conversion below are 4:2:0-only.
-        if frame.chroma_format_idc != 1 {
-            return Err(HeifError::Unsupported(format!(
-                "HEVC chroma_format_idc {} (only 4:2:0 is supported)",
-                frame.chroma_format_idc
-            )));
-        }
+        let (chroma_shift_w, chroma_shift_h) = chroma_shifts(frame.chroma_format_idc)?;
         let width = frame.width as usize;
         let height = frame.height as usize;
-        let cw = width.div_ceil(2);
-        let ch = height.div_ceil(2);
+        let cw = width.div_ceil(1 << chroma_shift_w);
+        let ch = height.div_ceil(1 << chroma_shift_h);
         let widen = |plane: &rust_h265::PixelData,
                      expect: usize,
                      name: &str|
@@ -122,6 +140,8 @@ impl YuvImage {
             width,
             height,
             bit_depth: frame.bit_depth,
+            chroma_shift_w,
+            chroma_shift_h,
             y: widen(&frame.y, width * height, "luma")?,
             u: widen(&frame.u, cw * ch, "Cb")?,
             v: widen(&frame.v, cw * ch, "Cr")?,
@@ -129,13 +149,22 @@ impl YuvImage {
     }
 
     /// Copy `tile` into this canvas with its top-left at `(x, y)` (luma
-    /// coordinates), clipping to the canvas edges. `(x, y)` must be even so
-    /// the 4:2:0 chroma grids stay aligned — grid tiling guarantees this
-    /// for every sane file (tile offsets are multiples of the tile size).
+    /// coordinates), clipping to the canvas edges. `(x, y)` must be a
+    /// multiple of the chroma subsampling so the chroma grids stay aligned —
+    /// grid tiling guarantees this for every sane file (tile offsets are
+    /// multiples of the tile size).
     pub fn blit(&mut self, tile: &YuvImage, x: usize, y: usize) -> Result<(), HeifError> {
-        if !x.is_multiple_of(2) || !y.is_multiple_of(2) {
+        if tile.chroma_shift_w != self.chroma_shift_w || tile.chroma_shift_h != self.chroma_shift_h
+        {
+            return Err(HeifError::Invalid(
+                "grid tiles with mixed chroma formats".into(),
+            ));
+        }
+        if !x.is_multiple_of(1 << self.chroma_shift_w)
+            || !y.is_multiple_of(1 << self.chroma_shift_h)
+        {
             return Err(HeifError::Unsupported(
-                "grid tiles at odd offsets (chroma grids misaligned)".into(),
+                "grid tiles at offsets that misalign the chroma grid".into(),
             ));
         }
         if tile.bit_depth != self.bit_depth {
@@ -152,14 +181,15 @@ impl YuvImage {
             self.y[dst_start..dst_start + copy_w].copy_from_slice(src);
         }
         // Chroma rows (both planes share geometry).
+        let (xc, yc) = (x >> self.chroma_shift_w, y >> self.chroma_shift_h);
         let (scw, dcw) = (tile.chroma_width(), self.chroma_width());
-        let copy_cw = scw.min(dcw.saturating_sub(x / 2));
+        let copy_cw = scw.min(dcw.saturating_sub(xc));
         let copy_ch = tile
             .chroma_height()
-            .min(self.chroma_height().saturating_sub(y / 2));
+            .min(self.chroma_height().saturating_sub(yc));
         for row in 0..copy_ch {
             let s = row * scw;
-            let d = (y / 2 + row) * dcw + x / 2;
+            let d = (yc + row) * dcw + xc;
             self.u[d..d + copy_cw].copy_from_slice(&tile.u[s..s + copy_cw]);
             self.v[d..d + copy_cw].copy_from_slice(&tile.v[s..s + copy_cw]);
         }
@@ -322,16 +352,25 @@ pub fn yuv_to_rgb(img: &YuvImage, nclx: &Nclx) -> RgbBuffer {
         } else {
             rows16.len() / (w * 3)
         }) {
-            // Vertical chroma position: samples are centred between luma
-            // rows, so luma row y maps to chroma coordinate (y - 0.5) / 2.
-            let cy = ((y_coord as f32 - 0.5) / 2.0).clamp(0.0, (ch - 1) as f32);
+            // Vertical chroma position: subsampled (4:2:0) samples are
+            // centred between luma rows, so luma row y maps to chroma
+            // coordinate (y - 0.5) / 2; full-resolution (4:4:4) samples are
+            // co-sited, so row y maps to y.
+            let cy = if img.chroma_shift_h == 1 {
+                (y_coord as f32 - 0.5) / 2.0
+            } else {
+                y_coord as f32
+            }
+            .clamp(0.0, (ch - 1) as f32);
             let cy0 = cy.floor() as usize;
             let cy1 = (cy0 + 1).min(ch - 1);
             let fy = cy - cy0 as f32;
             for x in 0..w {
                 // Horizontal chroma position: co-sited left → chroma sample
-                // i sits at luma column 2i, so column x maps to x / 2.
-                let cx = (x as f32 / 2.0).clamp(0.0, (cw - 1) as f32);
+                // i sits at luma column i * SubWidthC, so column x maps to
+                // x / 2 in 4:2:0 and to x in 4:4:4.
+                let cx =
+                    (x as f32 / (1u32 << img.chroma_shift_w) as f32).clamp(0.0, (cw - 1) as f32);
                 let cx0 = cx.floor() as usize;
                 let cx1 = (cx0 + 1).min(cw - 1);
                 let fx = cx - cx0 as f32;

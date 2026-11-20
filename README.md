@@ -72,11 +72,12 @@ non-exhaustive, so downstream matches need a wildcard arm.
 | Single-picture `hvc1` items | ✅ |
 | Grid-tiled images (every iPhone photo) | ✅ tiles decoded in parallel |
 | 8-bit and 10-bit HEVC (Main / Main 10) | ✅ 10-bit → 16-bit output |
+| 4:2:0 and 4:4:4 chroma | ✅ 4:4:4 decodes with full-resolution chroma (some edited iPhone photos use it); 4:2:2 is rejected |
 | Orientation (`irot` / `imir` / `clap`) | ✅ applied in `ipma` order |
 | BT.601 / BT.709 / BT.2020 matrices, full & limited range | ✅ |
 | Colour signalling from `colr` nclx, else the HEVC bitstream (SPS VUI) | ✅ iPhone photos carry only the latter |
 | Display P3 → sRGB conversion (iPhone default) | ✅ linear-light 3×3 |
-| Alpha auxiliary images | ⚠️ only when 4:2:0-coded (monochrome alpha needs a 4:0:0 decoder) |
+| Alpha auxiliary images | ⚠️ only when 4:2:0- or 4:4:4-coded (monochrome alpha needs a 4:0:0 decoder) |
 | `idat`-stored payloads, multi-extent items | ✅ |
 | `wasm32` targets | ✅ builds; decodes on a single thread there |
 | Malformed input | errors, never panics (every parse is bounds-checked) |
@@ -93,8 +94,8 @@ Output is always display-ready sRGB.
   items, overlays (`iovl`), protected items, external data references.
 - Multi-layer (`lhv1`) items. When the primary item is the `hvc1` base
   layer of a layered file, that base layer decodes.
-- 4:4:4 streams are rejected with a clear error: `rust_h265` decodes them,
-  but the colour pipeline here is 4:2:0-only.
+- 4:2:2 streams are rejected with a clear error; `rust_h265` does not
+  decode them.
 - ICC profiles are reported (`ColorInfo::icc_present`) but not applied;
   PQ/HLG HDR transfers are not tone-mapped.
 

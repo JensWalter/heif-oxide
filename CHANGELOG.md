@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 4:4:4 decoding. The colour pipeline, grid canvas and tile blit follow the
+  stream's chroma format, so 4:4:4 pictures and grids of 4:4:4 tiles decode
+  with one chroma sample per pixel. 4:2:2 is still rejected with a clear
+  error, and a grid that mixes chroma formats is invalid.
+
 ## 0.2.0 — 2026-11-20
 
 ### Breaking changes
